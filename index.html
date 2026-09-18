@@ -216,6 +216,15 @@
       padding:5px; flex-shrink:0;
     }
 
+    /* Capacidades */
+    .cap-item {
+      display:flex; align-items:center; gap:8px;
+      padding:5px 0; border-bottom:1px solid #F1F5F9; font-size:11px;
+    }
+    .cap-item:last-child { border-bottom:none; }
+    .cap-icon { font-size:14px; flex-shrink:0; }
+    .cap-txt  { color:#374151; line-height:1.3; }
+
     @media(max-width:680px) {
       .avatar-panel { display:none; }
       .main { padding:10px; }
@@ -268,30 +277,41 @@
       </div>
       <div class="avatar-name">SafeBot</div>
       <div class="avatar-role">Agente virtual de inteligencia geoespacial</div>
+      <div style="font-size:10px;color:#94A3B8;text-align:center;margin-top:2px;">
+        by Marlon Esteban Díaz Rojas<br>
+        <span style="color:#BFDBFE;">MADSI · USTA · 2026</span>
+      </div>
       <span class="avatar-badge">LangChain Agent</span>
     </div>
 
-    <!-- Stats -->
+    <!-- Capacidades -->
     <div class="stats-card">
-      <div class="stat-row">
-        <span class="stat-label">Modelo</span>
-        <span class="stat-val">XGBoost v4</span>
+      <div style="font-size:11px;font-weight:700;color:#1F3864;margin-bottom:8px;">
+        ¿Qué puedo hacer?
       </div>
-      <div class="stat-row">
-        <span class="stat-label">R²</span>
-        <span class="stat-val green">0.954</span>
+      <div class="cap-item">
+        <span class="cap-icon">🗺️</span>
+        <span class="cap-txt">Riesgo por UPZ en tiempo real</span>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Eficacia</span>
-        <span class="stat-val green">87.67%</span>
+      <div class="cap-item">
+        <span class="cap-icon">📊</span>
+        <span class="cap-txt">Estadísticas NUSE 123</span>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Registros</span>
-        <span class="stat-val">1.51M</span>
+      <div class="cap-item">
+        <span class="cap-icon">📖</span>
+        <span class="cap-txt">Info del proyecto y tesis</span>
       </div>
-      <div class="stat-row">
-        <span class="stat-label">Fuentes</span>
-        <span class="stat-val">3</span>
+      <div class="cap-item">
+        <span class="cap-icon">🏢</span>
+        <span class="cap-txt">Productos y segmentos</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-icon">🔬</span>
+        <span class="cap-txt">Análisis de competidores</span>
+      </div>
+      <div class="cap-item">
+        <span class="cap-icon">💡</span>
+        <span class="cap-txt">IVL lumínico y estratificación</span>
       </div>
     </div>
   </div>
@@ -427,10 +447,10 @@
     const ok = await checkStatus()
     if (ok) {
       addMsg(
-        '¡Hola! Soy <strong>SafeBot</strong> 🛡️, el asistente virtual de <strong>SafeData Ops</strong>.<br><br>' +
-        'Consulto datos reales del <strong>NUSE 123</strong> y el modelo <strong>XGBoost v4</strong> ' +
-        '(R²=0.954, 87.67% eficacia) para responder sobre riesgo urbano en Bogotá D.C.<br><br>' +
-        '¿En qué puedo ayudarte hoy?', 'bot')
+        '¡Hola! Soy <strong>SafeBot</strong>, el agente virtual de <strong>SafeData Ops</strong>. ' +
+        'Tengo acceso al libro de tesis completo y a datos reales del NUSE 123.<br><br>' +
+        'Pregúntame sobre <strong>riesgo urbano</strong>, <strong>competidores</strong>, ' +
+        '<strong>productos</strong> o el <strong>modelo estadístico</strong>. ¿En qué te ayudo?', 'bot')
     } else {
       addMsg('⚠️ No se pudo conectar con el servidor. Verifica que el backend esté activo.','bot')
     }

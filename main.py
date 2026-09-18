@@ -234,7 +234,17 @@ HERRAMIENTAS = [
     informacion_safedata_ops,
 ]
 
-SYSTEM_PROMPT = """Eres SafeBot, el asistente virtual inteligente de SafeData Ops S.A.S.
+# Cargar texto del libro de tesis para RAG
+_THESIS_PATH = os.path.join(BASE_DIR, 'thesis_context.txt')
+_THESIS_TEXT = ''
+try:
+    with open(_THESIS_PATH, encoding='utf-8') as _f:
+        _THESIS_TEXT = _f.read()
+    print(f'Libro de tesis cargado: {len(_THESIS_TEXT.split()):,} palabras')
+except Exception as _e:
+    print(f'Libro no disponible: {_e}')
+
+SYSTEM_PROMPT = f"""Eres SafeBot, el asistente virtual inteligente de SafeData Ops S.A.S.
 
 SafeData Ops es un sistema de inteligencia geoespacial para estimación y
 visualización de riesgo urbano en Bogotá D.C., desarrollado como proyecto
@@ -270,7 +280,17 @@ EJEMPLOS DE LO QUE PUEDES RESPONDER:
 - Contexto académico del proyecto
 - Cómo se integran las tres fuentes de datos
 
-Empieza cada conversación presentándote brevemente."""
+Empieza cada conversación presentándote brevemente.
+
+CONOCIMIENTO BASE — LIBRO DE TESIS SAFEDATA OPS:
+El siguiente texto contiene el plan de negocio completo de SafeData Ops, incluyendo
+análisis de competidores, modelo financiero, descripción técnica del modelo estadístico,
+fuentes de datos, productos, segmentos de clientes, marco teórico y conclusiones.
+Úsalo para responder preguntas sobre el proyecto, la empresa, los competidores,
+el modelo de negocio o cualquier información técnica del sistema.
+
+{_THESIS_TEXT}
+"""
 
 def crear_agente():
     llm = ChatAnthropic(
