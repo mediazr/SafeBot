@@ -345,7 +345,24 @@ async def chat(req: MensajeRequest):
             "chat_history": historia,
         })
 
-        respuesta = resultado.get("output", "Lo siento, no pude procesar tu pregunta.")
+        # output puede ser string o lista de bloques de contenido
+        raw = resultado.get("output", "")
+        if isinstance(raw, list):
+            # Extraer texto de bloques de contenido
+            partes = []
+            for bloque in raw:
+                if isinstance(bloque, dict):
+                    partes.append(bloque.get("text", ""))
+                elif isinstance(bloque, str):
+                    partes.append(bloque)
+            respuesta = "".join(partes).strip()
+        elif isinstance(raw, str):
+            respuesta = raw.strip()
+        else:
+            respuesta = str(raw)
+        
+        if not respuesta:
+            respuesta = "Lo siento, no pude procesar tu pregunta. Por favor intenta de nuevo."
 
         # Actualizar historia
         from langchain_core.messages import HumanMessage, AIMessage
