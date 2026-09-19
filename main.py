@@ -1,15 +1,15 @@
 """
-SafeBot — Agente conversacional de SafeData Ops
+SafeBot - Agente conversacional de SafeData Ops
 Electiva: Agentes Virtuales Inteligentes
-Maestría en Análisis de Datos y Sistemas Inteligentes
-Universidad Santo Tomás — Marlon Esteban Díaz Rojas — 2026
+Maestria en Analisis de Datos y Sistemas Inteligentes
+Universidad Santo Tomas - Marlon Esteban Diaz Rojas - 2026
 
 Stack: LangChain + Claude claude-sonnet-4-6 + FastAPI
-Herramientas: API propia SafeData Ops (NUSE 123 + XGBoost v4 R²=0.954)
+Herramientas: API propia SafeData Ops (NUSE 123 + XGBoost v4 R2=0.954)
+RAG: Libro de tesis completo como contexto del agente
 """
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 import httpx
@@ -21,24 +21,34 @@ from langchain_anthropic import ChatAnthropic
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 
-from langchain_core.messages import SystemMessage
-
-# ── Configuración ────────────────────────────────────────────────────
+# ── Configuracion ────────────────────────────────────────────────────
 ANTHROPIC_API_KEY   = os.getenv("ANTHROPIC_API_KEY", "")
 SAFEDATAOPS_API_URL = os.getenv("SAFEDATAOPS_API_URL",
                                 "https://safedataops.onrender.com")
 
-# ── Herramientas del agente ──────────────────────────────────────────
+# ── BASE_DIR siempre primero ─────────────────────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
+# ── Cargar libro de tesis (RAG) ──────────────────────────────────────
+_THESIS_TEXT = ''
+try:
+    _thesis_path = os.path.join(BASE_DIR, 'thesis_context.txt')
+    with open(_thesis_path, encoding='utf-8') as _f:
+        _THESIS_TEXT = _f.read()
+    print(f"Libro de tesis cargado: {len(_THESIS_TEXT.split()):,} palabras")
+except Exception as _e:
+    print(f"Libro no disponible: {_e}")
+
+# ── Herramientas del agente ──────────────────────────────────────────
 @tool
 def consultar_riesgo_upz(anio: int = 2025, mes: int = 7) -> str:
     """
-    Consulta la estimación de riesgo por UPZ en San Cristóbal usando el modelo
-    XGBoost v4 (R²=0.954, 87.67% eficacia). Devuelve el ranking de riesgo
-    compuesto (70% predicción de incidentes + 30% IVL lumínico) para todas
-    las UPZs de la localidad. Usar cuando el usuario pregunte por riesgo,
-    zonas peligrosas, predicciones o ranking de UPZs.
+    Consulta la estimacion de riesgo por UPZ en San Cristobal usando el modelo
+    XGBoost v4 (R2=0.954, 87.67% eficacia). Devuelve el ranking de riesgo
+    compuesto (70% prediccion de incidentes + 30% IVL luminico) para todas
+    las UPZs. Usar cuando pregunten por riesgo, zonas peligrosas o predicciones.
     """
     try:
         with httpx.Client(timeout=30) as client:
@@ -51,17 +61,17 @@ def consultar_riesgo_upz(anio: int = 2025, mes: int = 7) -> str:
             if not upzs:
                 return "No se obtuvieron datos de riesgo."
 
-            resultado = f"Estimación de riesgo — San Cristóbal — {mes}/{anio}\n"
+            resultado = f"Estimacion de riesgo - San Cristobal - {mes}/{anio}\n"
             resultado += f"Modelo: {data.get('modelo', 'XGBoost v4')}\n\n"
             resultado += "Ranking de UPZs por riesgo compuesto:\n"
             for i, u in enumerate(upzs, 1):
-                nivel = u.get("nivel_riesgo", "")
-                riesgo_pct = round(u.get("riesgo", 0) * 100, 1)
-                pred = u.get("prediccion_incidentes", 0)
-                estrato = u.get("estrato_promedio", "N/D")
+                nivel    = u.get("nivel_riesgo", "")
+                riesgo   = round(u.get("riesgo", 0) * 100, 1)
+                pred     = u.get("prediccion_incidentes", 0)
+                estrato  = u.get("estrato_promedio", "N/D")
                 resultado += (
-                    f"{i}. {u['upz']}: {riesgo_pct}% ({nivel})\n"
-                    f"   Predicción: {pred:,.0f} incidentes | Estrato: {estrato}\n"
+                    f"{i}. {u['upz']}: {riesgo}% ({nivel})\n"
+                    f"   Prediccion: {pred:,.0f} incidentes | Estrato: {estrato}\n"
                 )
             return resultado
     except Exception as e:
@@ -69,45 +79,39 @@ def consultar_riesgo_upz(anio: int = 2025, mes: int = 7) -> str:
 
 
 @tool
-def consultar_incidentes_nuse(anio: str = "2023",
-                               localidad: str = None) -> str:
+def consultar_incidentes_nuse(anio: str = "2023", localidad: str = None) -> str:
     """
-    Consulta estadísticas reales del NUSE 123 (Número Único de Seguridad y
-    Emergencias de Bogotá). Devuelve total de incidentes, distribución por
-    localidad, tipos de incidente más frecuentes y tendencia mensual.
-    Usar cuando el usuario pregunte por incidentes históricos, estadísticas
-    del NUSE, tipos de delito o tendencias de seguridad en Bogotá.
+    Consulta estadisticas reales del NUSE 123. Devuelve total de incidentes,
+    distribucion por localidad y tipos de incidente. Usar cuando pregunten
+    por incidentes historicos, estadisticas o tendencias de seguridad.
     """
     try:
         params = {"anio": anio}
         if localidad:
             params["localidad"] = localidad.upper()
         with httpx.Client(timeout=30) as client:
-            r = client.get(
-                f"{SAFEDATAOPS_API_URL}/api/resumen",
-                params=params
-            )
+            r    = client.get(f"{SAFEDATAOPS_API_URL}/api/resumen", params=params)
             data = r.json()
 
-        total = data.get("total_incidentes", 0)
+        total    = data.get("total_incidentes", 0)
         por_tipo = data.get("por_tipo", [])[:5]
         por_loc  = data.get("por_localidad", [])[:5]
 
-        resultado  = f"Incidentes NUSE 123 — {anio}"
+        resultado  = f"Incidentes NUSE 123 - {anio}"
         if localidad:
-            resultado += f" — {localidad}"
+            resultado += f" - {localidad}"
         resultado += f"\nTotal: {total:,} incidentes\n"
-        resultado += f"Fuente: {data.get('fuente','NUSE 123')}\n\n"
+        resultado += f"Fuente: {data.get('fuente', 'NUSE 123')}\n\n"
 
         if por_tipo:
             resultado += "Top 5 tipos de incidente:\n"
             for t in por_tipo:
-                resultado += f"  • {t['tipo']}: {t['incidentes']:,}\n"
+                resultado += f"  * {t['tipo']}: {t['incidentes']:,}\n"
 
         if por_loc and not localidad:
-            resultado += "\nTop 5 localidades con más incidentes:\n"
+            resultado += "\nTop 5 localidades:\n"
             for l in por_loc:
-                resultado += f"  • {l['localidad']}: {l['incidentes']:,}\n"
+                resultado += f"  * {l['localidad']}: {l['incidentes']:,}\n"
 
         return resultado
     except Exception as e:
@@ -117,30 +121,27 @@ def consultar_incidentes_nuse(anio: str = "2023",
 @tool
 def consultar_ivl_luminarias() -> str:
     """
-    Consulta el Índice de Vulnerabilidad Lumínica (IVL) por UPZ en
-    San Cristóbal. El IVL mide la relación entre incidentes históricos y
-    cobertura de alumbrado público (luminarias UAESP/IDECA). Mayor IVL
-    indica mayor vulnerabilidad. Incluye el estrato socioeconómico promedio
-    de cada UPZ según datos del DANE. Usar cuando el usuario pregunte
-    por luminarias, alumbrado, vulnerabilidad o estratificación.
+    Consulta el Indice de Vulnerabilidad Luminica (IVL) por UPZ en San Cristobal.
+    Incluye estrato socioeconomico DANE. Usar cuando pregunten por luminarias,
+    alumbrado, vulnerabilidad o estratificacion socioeconomica.
     """
     try:
         with httpx.Client(timeout=30) as client:
-            r = client.get(f"{SAFEDATAOPS_API_URL}/api/ivl")
+            r    = client.get(f"{SAFEDATAOPS_API_URL}/api/ivl")
             data = r.json()
 
         upzs = data.get("upzs", [])
-        resultado  = "Índice de Vulnerabilidad Lumínica (IVL) — San Cristóbal\n"
-        resultado += f"Fórmula: {data.get('formula','IVL = Incidentes / (Luminarias + 1)')}\n"
-        resultado += f"Fuente: {data.get('fuente','Luminarias UAESP/IDECA + DANE')}\n\n"
+        resultado  = "Indice de Vulnerabilidad Luminica (IVL) - San Cristobal\n"
+        resultado += "Formula: IVL = Incidentes / (Luminarias funcionales + 1)\n"
+        resultado += "Fuente: Luminarias UAESP/IDECA + Estratificacion DANE\n\n"
 
         upzs_sorted = sorted(upzs, key=lambda x: -x.get("VULNERABILITY_INDEX", 0))
         for u in upzs_sorted:
-            ivl    = u.get("VULNERABILITY_INDEX", 0)
-            lum    = u.get("INFRA_POINTS", 0)
-            estrato= u.get("estrato_promedio", "N/D")
+            ivl     = u.get("VULNERABILITY_INDEX", 0)
+            lum     = u.get("INFRA_POINTS", 0)
+            estrato = u.get("estrato_promedio", "N/D")
             resultado += (
-                f"• {u['UPZ']}: IVL={ivl:,.0f} | "
+                f"* {u['UPZ']}: IVL={ivl:,.0f} | "
                 f"Luminarias={lum:.0f} | Estrato={estrato}\n"
             )
         return resultado
@@ -151,79 +152,134 @@ def consultar_ivl_luminarias() -> str:
 @tool
 def informacion_safedata_ops(tema: str = "general") -> str:
     """
-    Proporciona información sobre SafeData Ops S.A.S.: qué es el sistema,
-    cómo funciona el modelo estadístico, qué fuentes de datos usa, cuáles
-    son sus productos y segmentos de clientes, y el contexto académico del
-    proyecto. Usar cuando el usuario pregunte qué es SafeData Ops, cómo
-    funciona, cuáles son sus productos o cuál es el propósito del sistema.
+    Proporciona informacion sobre SafeData Ops: que es, como funciona,
+    productos, segmentos de clientes y contexto academico. Usar cuando
+    pregunten por la empresa, sus productos o el proyecto de grado.
     """
     info = {
         "general": """
 SafeData Ops S.A.S. es un sistema de inteligencia geoespacial para
-estimación y visualización de riesgo urbano en Bogotá D.C.
+estimacion y visualizacion de riesgo urbano en Bogota D.C.
 
 PROPUESTA DE VALOR:
-SafeData transforma datos históricos y geoespaciales heterogéneos en
-estimaciones explicables de riesgo por zona, proporcionando información
-para apoyar la priorización de recursos y la toma de decisiones de seguridad.
+SafeData transforma datos historicos y geoespaciales heterogeneos en
+estimaciones explicables de riesgo por zona, proporcionando informacion
+para apoyar la priorizacion de recursos y la toma de decisiones de seguridad.
 
-FUENTES DE DATOS (tres):
-1. NUSE 123 — 1.510.324 incidentes · San Cristóbal · 2015-2026
-   (Número Único de Seguridad y Emergencias · Datos Abiertos Bogotá)
-2. Luminarias UAESP/IDECA — Alumbrado público · Spatial Join WGS84
-3. Estratificación DANE — 4.202 manzanas · estrato por UPZ
+TRES FUENTES DE DATOS:
+1. NUSE 123 - 1.510.324 incidentes San Cristobal 2015-2026
+2. Luminarias UAESP/IDECA - Alumbrado publico - Spatial Join WGS84
+3. Estratificacion DANE - 4.202 manzanas - estrato por UPZ
 
-MODELO ESTADÍSTICO:
-• Algoritmo: XGBoost (Extreme Gradient Boosting)
-• R² = 0.954 — explica el 95.4% de la variabilidad
-• Eficacia de estimación: 87.67% (validación temporal estricta)
-• MAE: 22.18 incidentes/UPZ/mes
-• Features: 34 variables (temporalidad, lags históricos, IVL, estrato, tipo)
+MODELO ESTADISTICO:
+* Algoritmo: XGBoost (Extreme Gradient Boosting)
+* R2 = 0.954 (explica el 95.4% de la variabilidad)
+* Eficacia de estimacion: 87.67% (validacion temporal estricta)
+* MAE: 22.18 incidentes/UPZ/mes
+* Features: 34 variables
 
 CICLO DEL SISTEMA:
-01 Ingesta → 02 Integración geoespacial → 03 Estimación XGBoost → 04 Visualización explicable
+01 Ingesta -> 02 Integracion geoespacial -> 03 Estimacion XGBoost -> 04 Visualizacion
 """,
         "productos": """
 PRODUCTOS DE SAFEDATA OPS:
 
 1. SafeCity Command Center (B2G)
-   • Clientes: Alcaldías locales · C4 Bogotá · Secretaría de Seguridad
-   • Precio: $90M - $180M COP / año
-   • Estado: En producción (prototipo)
+   * Clientes: Alcaldias locales, C4 Bogota, Secretaria de Seguridad
+   * Precio: $90M - $180M COP / ano
+   * Estado: En produccion (prototipo)
 
-2. SafeRoute Pro API (B2B Logística)
-   • Clientes: Empresas de transporte · Seguridad privada
-   • Precio: $6M COP / mes
-   • Estado: En producción (prototipo)
+2. SafeRoute Pro API (B2B Logistica)
+   * Clientes: Empresas de transporte, Seguridad privada
+   * Precio: $6M COP / mes
+   * Estado: En produccion (prototipo)
 
 3. SafeEstate Analytics (B2B Inmobiliario)
-   • Clientes: Constructoras · Fondos de inversión
-   • Precio: $3M COP / informe
-   • Estado: En producción (prototipo)
+   * Clientes: Constructoras, Fondos de inversion
+   * Precio: $3M COP / informe
+   * Estado: En produccion (prototipo)
 
-4. SafeCitizen App (B2C) — PRODUCTO CONCEPTUAL
-   • Clientes: Ciudadanos de Bogotá
-   • Precio: Freemium
-   • Estado: Concepto — versión futura (Etapa 3, año 5+)
+4. SafeCitizen App (B2C) - PRODUCTO CONCEPTUAL
+   * Clientes: Ciudadanos de Bogota
+   * Precio: Freemium
+   * Estado: Concepto - version futura (Etapa 3, ano 5+)
+""",
+        "financiero": """
+MODELO FINANCIERO SAFEDATA OPS:
+
+* Inversion inicial: $210M COP
+  (60% credito bancario 17.55% EA + 40% capital semilla)
+* VPN: $1.112 billones COP
+* TIR: 78.1%
+* TIRM: 58.9%
+* B/C: 6.3x
+* Periodo de recuperacion: 2.5 anos (escenario realista)
+* Tres escenarios: optimista, realista y conservador - todos VIABLES
+
+PROYECCION DE INGRESOS:
+* Ano 1: $246M COP
+* Ano 5: $2.160M COP
 """,
         "academico": """
-CONTEXTO ACADÉMICO:
+CONTEXTO ACADEMICO:
 
-Proyecto de grado — Maestría en Análisis de Datos y Sistemas Inteligentes
-Universidad Santo Tomás · Bucaramanga · 2026
+Proyecto de grado - Maestria en Analisis de Datos y Sistemas Inteligentes
+Universidad Santo Tomas - Bucaramanga - 2026
+Modalidad: Opcion de grado - Creacion de empresa
 
-Autor: Marlon Esteban Díaz Rojas
-Directoras: Yuli Andrea Álvarez Pizarro · Pedro Pablo Díaz Jaimes
+Autor: Marlon Esteban Diaz Rojas
+Directoras: Yuli Andrea Alvarez Pizarro y Pedro Pablo Diaz Jaimes
+Caso de estudio: Localidad San Cristobal - Bogota D.C.
 
-Modalidad: Opción de grado — Creación de empresa
-Caso de estudio: Localidad San Cristóbal · Bogotá D.C.
-
-Tecnologías: Python · XGBoost · FastAPI · React · GeoPandas
-Despliegue: GitHub + Render (cloud)
+Tecnologias: Python, XGBoost, FastAPI, React, GeoPandas, LangChain
+Despliegue: GitHub + Render
 Repositorio: github.com/mediazr/SafeDataOps
 """
     }
     return info.get(tema, info["general"])
+
+
+# ── System Prompt ────────────────────────────────────────────────────
+SYSTEM_PROMPT = """Eres SafeBot, el asistente virtual inteligente de SafeData Ops S.A.S.,
+un sistema de inteligencia geoespacial para estimacion y visualizacion de riesgo urbano
+en Bogota D.C., desarrollado como proyecto de grado de la Maestria en Analisis de Datos
+y Sistemas Inteligentes de la Universidad Santo Tomas por Marlon Esteban Diaz Rojas.
+
+TU ROL:
+- Responder preguntas sobre riesgo urbano en San Cristobal usando datos reales
+- Explicar como funciona el modelo estadistico XGBoost (R2=0.954)
+- Orientar sobre los productos y servicios de SafeData Ops
+- Responder sobre el proyecto academico, competidores y modelo de negocio
+- Usar el conocimiento base del plan de negocio cuando sea relevante
+
+HERRAMIENTAS DISPONIBLES:
+- consultar_riesgo_upz: estimacion de riesgo por UPZ para un mes/ano
+- consultar_incidentes_nuse: estadisticas historicas del NUSE 123
+- consultar_ivl_luminarias: indice de vulnerabilidad luminica + estrato DANE
+- informacion_safedata_ops: informacion sobre la empresa y sus productos
+
+INSTRUCCIONES:
+- Responde SIEMPRE en espanol
+- Usa las herramientas para dar datos reales, no inventes cifras
+- Se conciso pero informativo - maximo 3-4 parrafos por respuesta
+- Menciona la fuente de los datos (NUSE 123, IDECA, DANE)
+- Si preguntan por zonas fuera de San Cristobal, indica que el piloto
+  actual cubre solo esa localidad pero el sistema es escalable a toda Bogota"""
+
+
+def get_system_prompt():
+    """Retorna el system prompt con el libro de tesis como contexto RAG."""
+    if _THESIS_TEXT:
+        return (
+            SYSTEM_PROMPT
+            + "\n\nCONOCIMIENTO BASE - PLAN DE NEGOCIO SAFEDATA OPS:\n"
+            + "El siguiente texto contiene el plan de negocio completo, "
+            + "analisis de competidores, modelo financiero, descripcion tecnica "
+            + "y conclusiones. Usalo para responder sobre el proyecto, "
+            + "empresa, competidores y modelo de negocio.\n\n"
+            + _THESIS_TEXT
+        )
+    return SYSTEM_PROMPT
 
 
 # ── Agente LangChain ─────────────────────────────────────────────────
@@ -234,88 +290,6 @@ HERRAMIENTAS = [
     informacion_safedata_ops,
 ]
 
-# Cargar texto del libro de tesis para RAG
-_THESIS_PATH = os.path.join(BASE_DIR, 'thesis_context.txt')
-_THESIS_TEXT = ''
-try:
-    with open(_THESIS_PATH, encoding='utf-8') as _f:
-        _THESIS_TEXT = _f.read()
-    print(f'Libro de tesis cargado: {len(_THESIS_TEXT.split()):,} palabras')
-except Exception as _e:
-    print(f'Libro no disponible: {_e}')
-
-SYSTEM_PROMPT = f"""Eres SafeBot, el asistente virtual inteligente de SafeData Ops S.A.S.
-
-SafeData Ops es un sistema de inteligencia geoespacial para estimación y
-visualización de riesgo urbano en Bogotá D.C., desarrollado como proyecto
-de grado de la Maestría en Análisis de Datos y Sistemas Inteligentes
-de la Universidad Santo Tomás.
-
-TU ROL:
-- Responder preguntas sobre riesgo urbano en San Cristóbal usando datos reales
-- Explicar cómo funciona el modelo estadístico XGBoost (R²=0.954)
-- Orientar sobre los productos y servicios de SafeData Ops
-- Proporcionar estadísticas reales del NUSE 123
-
-HERRAMIENTAS DISPONIBLES:
-- consultar_riesgo_upz: estimación de riesgo por UPZ para un mes/año
-- consultar_incidentes_nuse: estadísticas históricas del NUSE 123
-- consultar_ivl_luminarias: índice de vulnerabilidad lumínica por UPZ
-- informacion_safedata_ops: información sobre el sistema y sus productos
-
-INSTRUCCIONES:
-- Responde SIEMPRE en español
-- Usa las herramientas para dar datos reales, no inventes cifras
-- Sé conciso pero informativo — máximo 3-4 párrafos por respuesta
-- Cuando des datos de riesgo, explica qué significa para el usuario
-- Si preguntan por zonas fuera de San Cristóbal, indica que el piloto
-  actual cubre solo esa localidad pero el sistema es escalable
-- Menciona siempre la fuente de los datos (NUSE 123, IDECA, DANE)
-
-EJEMPLOS DE LO QUE PUEDES RESPONDER:
-- Preguntas sobre riesgo por zona o UPZ
-- Estadísticas de incidentes en Bogotá
-- Información sobre el modelo estadístico y sus métricas
-- Productos y precios de SafeData Ops
-- Contexto académico del proyecto
-- Cómo se integran las tres fuentes de datos
-
-Empieza cada conversación presentándote brevemente.
-
-CONOCIMIENTO BASE — LIBRO DE TESIS SAFEDATA OPS:
-El siguiente texto contiene el plan de negocio completo de SafeData Ops, incluyendo
-análisis de competidores, modelo financiero, descripción técnica del modelo estadístico,
-fuentes de datos, productos, segmentos de clientes, marco teórico y conclusiones.
-Úsalo para responder preguntas sobre el proyecto, la empresa, los competidores,
-el modelo de negocio o cualquier información técnica del sistema.
-
-{_THESIS_TEXT}
-"""
-
-# ── Cargar libro de tesis como contexto RAG ─────────────────────────
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
-_THESIS_TEXT = ''
-try:
-    _thesis_path = os.path.join(BASE_DIR, 'thesis_context.txt')
-    with open(_thesis_path, encoding='utf-8') as _f:
-        _THESIS_TEXT = _f.read()
-    print(f"Libro de tesis cargado: {len(_THESIS_TEXT.split()):,} palabras")
-except Exception as _e:
-    print(f"Libro no disponible: {_e}")
-
-def get_system_prompt():
-    if _THESIS_TEXT:
-        extra = (
-            "\n\nCONOCIMIENTO BASE - PLAN DE NEGOCIO SAFEDATA OPS:\n"
-            "Usa el siguiente texto del plan de negocio completo para responder "
-            "sobre el proyecto, competidores, modelo financiero, productos y metodologia.\n\n"
-            + _THESIS_TEXT
-        )
-        return SYSTEM_PROMPT + extra
-    return SYSTEM_PROMPT
-
-
 
 def crear_agente():
     llm = ChatAnthropic(
@@ -324,14 +298,12 @@ def crear_agente():
         temperature=0.2,
         max_tokens=1000,
     )
-
     prompt = ChatPromptTemplate.from_messages([
         ("system", get_system_prompt()),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
     ])
-
     agent = create_tool_calling_agent(llm, HERRAMIENTAS, prompt)
     return AgentExecutor(
         agent=agent,
@@ -341,16 +313,19 @@ def crear_agente():
         handle_parsing_errors=True,
     )
 
-# Cache de sesiones (memoria por conversación)
+
+# Cache de sesiones
 sesiones: dict = {}
+
 
 def obtener_sesion(session_id: str):
     if session_id not in sesiones:
         sesiones[session_id] = {
-            "agente": crear_agente(),
+            "agente":   crear_agente(),
             "historia": []
         }
     return sesiones[session_id]
+
 
 # ── FastAPI ──────────────────────────────────────────────────────────
 app = FastAPI(title="SafeBot API", version="1.0.0")
@@ -359,24 +334,29 @@ app.add_middleware(
     allow_origins=["*"], allow_methods=["*"], allow_headers=["*"]
 )
 
+
 class MensajeRequest(BaseModel):
-    mensaje: str
+    mensaje:    str
     session_id: str = "default"
 
+
 class MensajeResponse(BaseModel):
-    respuesta: str
+    respuesta:  str
     session_id: str
+
 
 @app.get("/api/health")
 async def health():
     return {
-        "status": "ok",
-        "agente": "SafeBot v1.0",
-        "llm": "Claude claude-sonnet-4-6 (Anthropic)",
-        "framework": "LangChain",
-        "herramientas": [t.name for t in HERRAMIENTAS],
-        "safedata_api": SAFEDATAOPS_API_URL,
+        "status":        "ok",
+        "agente":        "SafeBot v1.0",
+        "llm":           "Claude claude-sonnet-4-6 (Anthropic)",
+        "framework":     "LangChain",
+        "herramientas":  [t.name for t in HERRAMIENTAS],
+        "tesis_cargada": bool(_THESIS_TEXT),
+        "safedata_api":  SAFEDATAOPS_API_URL,
     }
+
 
 @app.post("/api/chat", response_model=MensajeResponse)
 async def chat(req: MensajeRequest):
@@ -386,14 +366,13 @@ async def chat(req: MensajeRequest):
         historia = sesion["historia"]
 
         resultado = agente.invoke({
-            "input": req.mensaje,
+            "input":        req.mensaje,
             "chat_history": historia,
         })
 
-        # output puede ser string o lista de bloques de contenido
+        # Extraer texto de la respuesta (puede ser string o lista de bloques)
         raw = resultado.get("output", "")
         if isinstance(raw, list):
-            # Extraer texto de bloques de contenido
             partes = []
             for bloque in raw:
                 if isinstance(bloque, dict):
@@ -405,53 +384,49 @@ async def chat(req: MensajeRequest):
             respuesta = raw.strip()
         else:
             respuesta = str(raw)
-        
-        if not respuesta:
-            respuesta = "Lo siento, no pude procesar tu pregunta. Por favor intenta de nuevo."
 
-        # Actualizar historia
-        from langchain_core.messages import HumanMessage, AIMessage
+        if not respuesta:
+            respuesta = "Lo siento, no pude procesar tu pregunta. Intenta de nuevo."
+
+        # Actualizar historia (max 20 mensajes)
         historia.append(HumanMessage(content=req.mensaje))
         historia.append(AIMessage(content=respuesta))
-
-        # Mantener solo las últimas 10 interacciones
         if len(historia) > 20:
-            historia = historia[-20:]
-            sesion["historia"] = historia
+            sesion["historia"] = historia[-20:]
 
         return MensajeResponse(respuesta=respuesta, session_id=req.session_id)
 
     except Exception as e:
         return MensajeResponse(
-            respuesta=f"Error procesando tu pregunta: {str(e)}. Por favor intenta de nuevo.",
+            respuesta=f"Error procesando tu pregunta: {str(e)}. Intenta de nuevo.",
             session_id=req.session_id
         )
+
 
 @app.delete("/api/chat/{session_id}")
 async def limpiar_sesion(session_id: str):
     if session_id in sesiones:
         del sesiones[session_id]
-    return {"mensaje": "Sesión eliminada", "session_id": session_id}
+    return {"mensaje": "Sesion eliminada", "session_id": session_id}
 
-# Servir frontend (mismo directorio en produccion)
-frontend_path = os.path.dirname(os.path.abspath(__file__))
 
+# ── Servir frontend ──────────────────────────────────────────────────
 @app.get("/")
 async def root():
-    idx = os.path.join(frontend_path, "index.html")
+    idx = os.path.join(BASE_DIR, "index.html")
     if os.path.exists(idx):
         return FileResponse(idx)
-    return {"status": "ok", "message": "SafeBot API"}
+    return {"status": "ok", "message": "SafeBot API activa"}
+
 
 @app.get("/{path:path}")
 async def static(path: str):
-    # No servir rutas de API como archivos
     if path.startswith("api"):
         raise HTTPException(404, "Not found")
-    fp = os.path.join(frontend_path, path)
+    fp = os.path.join(BASE_DIR, path)
     if os.path.exists(fp) and os.path.isfile(fp):
         return FileResponse(fp)
-    idx = os.path.join(frontend_path, "index.html")
+    idx = os.path.join(BASE_DIR, "index.html")
     if os.path.exists(idx):
         return FileResponse(idx)
     raise HTTPException(404, "Not found")
