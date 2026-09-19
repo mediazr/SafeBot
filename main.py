@@ -292,6 +292,31 @@ el modelo de negocio o cualquier información técnica del sistema.
 {_THESIS_TEXT}
 """
 
+# ── Cargar libro de tesis como contexto RAG ─────────────────────────
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+_THESIS_TEXT = ''
+try:
+    _thesis_path = os.path.join(BASE_DIR, 'thesis_context.txt')
+    with open(_thesis_path, encoding='utf-8') as _f:
+        _THESIS_TEXT = _f.read()
+    print(f"Libro de tesis cargado: {len(_THESIS_TEXT.split()):,} palabras")
+except Exception as _e:
+    print(f"Libro no disponible: {_e}")
+
+def get_system_prompt():
+    if _THESIS_TEXT:
+        extra = (
+            "\n\nCONOCIMIENTO BASE - PLAN DE NEGOCIO SAFEDATA OPS:\n"
+            "Usa el siguiente texto del plan de negocio completo para responder "
+            "sobre el proyecto, competidores, modelo financiero, productos y metodologia.\n\n"
+            + _THESIS_TEXT
+        )
+        return SYSTEM_PROMPT + extra
+    return SYSTEM_PROMPT
+
+
+
 def crear_agente():
     llm = ChatAnthropic(
         model="claude-sonnet-4-6",
@@ -301,7 +326,7 @@ def crear_agente():
     )
 
     prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
+        ("system", get_system_prompt()),
         MessagesPlaceholder(variable_name="chat_history"),
         ("human", "{input}"),
         MessagesPlaceholder(variable_name="agent_scratchpad"),
